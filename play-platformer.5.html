@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Platformer with Projectiles & Power-ups</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; }
+  canvas { display: block; background: #fff; }
+  #gameModal {
+    display: none; position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%; background: rgba(0,0,0,0.5);
+    justify-content: center; align-items: center;
+  }
+  .modal-content {
+    background: #fff; padding: 20px; border-radius: 8px;
+    text-align: center; width: 300px;
+  }
+  .modal-content h2 { margin-bottom: 20px; }
+  .modal-content button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<div id="gameModal">
+  <div class="modal-content">
+    <h2 id="modalText"></h2>
+    <button id="restartBtn">Restart</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const WIDTH = canvas.width, HEIGHT = canvas.height;
+
+let player = { x: 100, y: 0, w: 50, h: 50, vx: 0, vy: 0, speed: 7, jump: -18, onGround: false };
+const gravity = 1;
+const keys = {};
+let gameOver = false, currentLevel = 0, score = 0, startTime = 0;
+let particles = [], projectiles = [];
+let doubleJumpActive = false, jumpCount = 0;
+
+// Levels with power-ups and projectile enemies
+const levels = [
+  {
+    bg: '#f0f8ff',
+    platforms: [
+      { x: 0, y: HEIGHT - 40, w: WIDTH, h: 40, moving: false },
+      { x: WIDTH * 0.25, y: HEIGHT - 150, w: 250, h: 30, moving: false }
+    ],
+    enemies: [
+      { x: WIDTH * 0.3, y: HEIGHT - 190, w: 50, h: 50, dir: 1, minX: WIDTH * 0.25, maxX: WIDTH * 0.45, speed: 1.5, alive: true, shape: 'square', shootTimer: 0 }
+    ],
+    goal: { x: WIDTH * 0.7, y: HEIGHT - 190, w: 50, h: 50 },
+    powerUp: { x: WIDTH * 0.4, y: HEIGHT - 190, w: 40, h: 40 }
+  },
+  {
+    bg: '#ffe4e1',
+    platforms: [
+      { x: 0, y: HEIGHT - 40, w: WIDTH, h: 40, moving: false },
+      { x: WIDTH * 0.2, y: HEIGHT - 180, w: 300, h: 30, moving: true, dir: 1, minX: WIDTH * 0.2, maxX: WIDTH * 0.5 }
+    ],
+    enemies: [
+      { x: WIDTH * 0.25, y: HEIGHT - 220, w: 50, h: 50, dir: 1, minX: WIDTH * 0.2, maxX: WIDTH * 0.45, speed: 2, alive: true, shape: 'circle', shootTimer: 0 }
+    ],
+    goal: { x: WIDTH * 0.8, y: HEIGHT - 220, w: 50, h: 50 },
+    powerUp: { x: WIDTH * 0.35, y: HEIGHT - 220, w: 40, h: 40 }
+  },
+  {
+    bg: '#ff11e1',
+    platforms: [
+      { x: 0, y: HEIGHT - 40, w: WIDTH, h: 40, moving: false },
+      { x: WIDTH * 0.2, y: HEIGHT - 180, w: 300, h: 30, moving: true, dir: 1, minX: WIDTH * 0.2, maxX: WIDTH * 0.5 }
+    ],
+    enemies: [
+      { x: WIDTH * 0.25, y: HEIGHT - 220, w: 50, h: 50, dir: 1, minX: WIDTH * 0.2, maxX: WIDTH * 0.45, speed: 2, alive: true, shape: 'circle', shootTimer: 0 },
+	{ x: WIDTH * 0.25, y: HEIGHT - 100, w: 50, h: 50, dir: 1, minX: WIDTH * 0.2, maxX: WIDTH, speed: 1, alive: true, shape: 'square', shootTimer: 0 }
+
+    ],
+    goal: { x: WIDTH * 0.8, y: HEIGHT - 220, w: 50, h: 50 },
+    powerUp: { x: WIDTH * 0.35, y: HEIGHT - 220, w: 40, h: 40 }
+  }
+  // Add more levels similarly...
+];
+
+document.addEventListener('keydown', e => keys[e.key] = true);
+document.addEventListener('keyup', e => keys[e.key] = false);
+
+function resetGame() {
+  const level = levels[currentLevel < levels.length ? currentLevel : 0];
+  player.x = 100; player.y = level.platforms[0].y - player.h;
+  player.vx = 0; player.vy = 0; gameOver = false;
+  particles = []; projectiles = []; doubleJumpActive = false; jumpCount = 0;
+  startTime = Date.now();
+  document.getElementById('gameModal').style.display = 'none';
+  if (currentLevel >= levels.length) { currentLevel = 0; score = 0; }
+  for (let e of level.enemies) e.alive = true;
+}
+
+document.getElementById('restartBtn').addEventListener('click', resetGame);
+
+function showModal(msg) {
+  document.getElementById('modalText').textContent = msg;
+  document.getElementById('gameModal').style.display = 'flex';
+}
+
+function createExplosion(x, y) {
+  for (let i = 0; i < 20; i++) {
+    particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 30 });
+  }
+}
+
+function updateParticles() {
+  particles = particles.filter(p => p.life > 0);
+  for (let p of particles) { p.x += p.vx; p.y += p.vy; p.life--; }
+}
+
+function calculateBonus(elapsed) {
+  if (elapsed < 10000) return 5000;
+  if (elapsed < 20000) return 2500;
+  if (elapsed < 30000) return 1000;
+  return 0;
+}
+
+function update() {
+  if (gameOver) return;
+  const level = levels[currentLevel];
+
+  // Movement
+  if (keys['ArrowLeft']) player.vx = -player.speed;
+  else if (keys['ArrowRight']) player.vx = player.speed;
+  else player.vx = 0;
+
+  if (keys['ArrowUp'] && (player.onGround || (doubleJumpActive && jumpCount < 2))) {
+    player.vy = player.jump;
+    player.onGround = false;
+    jumpCount++;
+  }
+
+  player.vy += gravity;
+  player.x += player.vx; player.y += player.vy;
+
+  // Moving platforms
+  for (let plat of level.platforms) {
+    if (plat.moving) {
+      plat.x += plat.dir * 2;
+      if (plat.x < plat.minX || plat.x + plat.w > plat.maxX) plat.dir *= -1;
+    }
+  }
+
+  // Collision with platforms
+  player.onGround = false;
+  for (let plat of level.platforms) {
+    if (player.x < plat.x + plat.w && player.x + player.w > plat.x &&
+        player.y < plat.y + plat.h && player.y + player.h > plat.y) {
+      if (player.vy > 0) {
+        player.y = plat.y - player.h; player.vy = 0; player.onGround = true; jumpCount = 0;
+      }
+    }
+  }
+
+  // Enemy movement & shooting
+  for (let e of level.enemies) {
+    if (!e.alive) continue;
+    e.x += e.dir * e.speed;
+    if (e.x < e.minX || e.x > e.maxX) e.dir *= -1;
+    e.shootTimer++;
+    if (e.shootTimer > 120) { // every ~2s
+      projectiles.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, vx: e.dir * 6, vy: 0 });
+      e.shootTimer = 0;
+    }
+  }
+
+  // Projectiles update
+  for (let p of projectiles) { p.x += p.vx; p.y += p.vy; }
+  projectiles = projectiles.filter(p => p.x > 0 && p.x < WIDTH);
+
+  // Collision with projectiles
+  for (let p of projectiles) {
+    if (player.x < p.x + 10 && player.x + player.w > p.x &&
+        player.y < p.y + 10 && player.y + player.h > p.y) {
+      gameOver = true; showModal('Hit by projectile! Game Over!');
+    }
+  }
+
+  // Collision with enemies
+  for (let e of level.enemies) {
+    if (!e.alive) continue;
+    if (player.x < e.x + e.w && player.x + player.w > e.x &&
+        player.y < e.y + e.h && player.y + player.h > e.y) {
+      if (player.vy > 0) {
+        e.alive = false; score += 100; createExplosion(e.x + e.w / 2, e.y + e.h / 2);
+        player.vy = player.jump / 2;
+      } else { gameOver = true; showModal('Game Over!'); }
+    }
+  }
+
+  // Power-up
+  const pu = level.powerUp;
+  if (pu && player.x < pu.x + pu.w && player.x + player.w > pu.x &&
+      player.y < pu.y + pu.h && player.y + player.h > pu.y) {
+    doubleJumpActive = true; level.powerUp = null; // collected
+  }
+
+  // Win condition
+  const goal = level.goal;
+  if (player.x < goal.x + goal.w && player.x + player.w > goal.x &&
+      player.y < goal.y + goal.h && player.y + player.h > goal.y) {
+    const elapsed = Date.now() - startTime;
+    const bonus = calculateBonus(elapsed);
+    score += 500 + bonus;
+    currentLevel++;
+    if (currentLevel < levels.length) showModal(`Level Complete! Bonus: ${bonus}`);
+    else showModal(`You Win! Final Score: ${score}`);
+    gameOver = true;
+  }
+
+  updateParticles();
+}
+
+function draw() {
+  const level = levels[currentLevel];
+  ctx.fillStyle = level.bg; ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  // Score & Timer
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  ctx.fillStyle = 'black'; ctx.font = '24px Arial';
+  ctx.fillText(`Score: ${score}`, 20, 30);
+  ctx.fillText(`Time: ${elapsed}s`, 20, 60);
+  if (doubleJumpActive) ctx.fillText(`Double Jump Active ⚡`, 20, 90);
+
+  // Player
+  ctx.fillStyle = 'blue'; ctx.fillRect(player.x, player.y, player.w, player.h);
+
+  // Platforms
+  ctx.fillStyle = 'green';
+  for (let plat of level.platforms) ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+  // Enemies
+  for (let e of level.enemies) {
+    if (!e.alive) continue;
+    ctx.fillStyle = 'red';
+    if (e.shape === 'circle') {
+      ctx.beginPath(); ctx.arc(e.x + e.w / 2, e.y + e.h / 2, e.w / 2, 0, Math.PI * 2); ctx.fill();
+    } else ctx.fillRect(e.x, e.y, e.w, e.h);
+  }
+
+  // Projectiles
+  ctx.fillStyle = 'darkred';
+  for (let p of projectiles) { ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fill(); }
+
+  // Explosion particles
+  ctx.fillStyle = 'orange';
+  for (let p of particles) { ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2); ctx.fill(); }
+
+  // Power-up
+  if (level.powerUp) {
+    ctx.font = '40px Arial'; ctx.fillText('⚡', level.powerUp.x, level.powerUp.y + 40);
+  }
+
+  // Goal
+  ctx.font = '40px Arial'; ctx.fillText('🏁', level.goal.x, level.goal.y + 40);
+}
+
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+
+resetGame(); gameLoop();
+</script>
+</body>
+</html>

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Platformer with Stomp & Fullscreen</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100%;
+  }
+  canvas {
+    display: block;
+    background: #fff;
+  }
+  #gameModal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5);
+    justify-content: center;
+    align-items: center;
+  }
+  .modal-content {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+    width: 300px;
+  }
+  .modal-content h2 { margin-bottom: 20px; }
+  .modal-content button {
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<!-- Modal -->
+<div id="gameModal">
+  <div class="modal-content">
+    <h2 id="modalText"></h2>
+    <button id="restartBtn">Restart</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Make canvas fill window
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const WIDTH = canvas.width;
+const HEIGHT = canvas.height;
+
+let player = { x: 100, y: 0, w: 50, h: 50, vx: 0, vy: 0, speed: 7, jump: -18, onGround: false };
+const gravity = 1;
+const keys = {};
+let gameOver = false;
+let currentLevel = 0;
+
+// Levels with bigger platforms
+const levels = [
+  {
+    bg: '#f0f8ff',
+    platforms: [
+      { x: 0, y: HEIGHT - 40, w: WIDTH, h: 40 },
+      { x: WIDTH * 0.25, y: HEIGHT - 150, w: 250, h: 30 },
+      { x: WIDTH * 0.6, y: HEIGHT - 300, w: 250, h: 30 }
+    ],
+    enemies: [
+      { x: WIDTH * 0.3, y: HEIGHT - 190, w: 50, h: 50, dir: 1, minX: WIDTH * 0.25, maxX: WIDTH * 0.45, speed: 1.5, alive: true }
+    ],
+    goal: { x: WIDTH * 0.7, y: HEIGHT - 340, w: 50, h: 50 }
+  },
+  {
+    bg: '#ffe4e1',
+    platforms: [
+      { x: 0, y: HEIGHT - 40, w: WIDTH, h: 40 },
+      { x: WIDTH * 0.2, y: HEIGHT - 180, w: 300, h: 30 },
+      { x: WIDTH * 0.55, y: HEIGHT - 320, w: 300, h: 30 }
+    ],
+    enemies: [
+      { x: WIDTH * 0.25, y: HEIGHT - 220, w: 50, h: 50, dir: 1, minX: WIDTH * 0.2, maxX: WIDTH * 0.45, speed: 2, alive: true },
+      { x: WIDTH * 0.6, y: HEIGHT - 360, w: 50, h: 50, dir: -1, minX: WIDTH * 0.55, maxX: WIDTH * 0.85, speed: 2, alive: true }
+    ],
+    goal: { x: WIDTH * 0.8, y: HEIGHT - 360, w: 50, h: 50 }
+  }
+];
+
+document.addEventListener('keydown', e => keys[e.key] = true);
+document.addEventListener('keyup', e => keys[e.key] = false);
+
+function resetGame() {
+  const level = levels[currentLevel < levels.length ? currentLevel : 0];
+  player.x = 100;
+  player.y = level.platforms[0].y - player.h;
+  player.vx = 0;
+  player.vy = 0;
+  gameOver = false;
+  document.getElementById('gameModal').style.display = 'none';
+  if (currentLevel >= levels.length) currentLevel = 0;
+  // Reset enemies alive state
+  for (let e of level.enemies) e.alive = true;
+}
+
+document.getElementById('restartBtn').addEventListener('click', resetGame);
+
+function showModal(message) {
+  document.getElementById('modalText').textContent = message;
+  document.getElementById('gameModal').style.display = 'flex';
+}
+
+function update() {
+  if (gameOver) return;
+
+  const level = levels[currentLevel];
+
+  // Movement
+  if (keys['ArrowLeft']) player.vx = -player.speed;
+  else if (keys['ArrowRight']) player.vx = player.speed;
+  else player.vx = 0;
+
+  if (keys['ArrowUp'] && player.onGround) {
+    player.vy = player.jump;
+    player.onGround = false;
+  }
+
+  player.vy += gravity;
+  player.x += player.vx;
+  player.y += player.vy;
+
+  // Collision with platforms
+  player.onGround = false;
+  for (let plat of level.platforms) {
+    if (player.x < plat.x + plat.w &&
+        player.x + player.w > plat.x &&
+        player.y < plat.y + plat.h &&
+        player.y + player.h > plat.y) {
+      if (player.vy > 0) {
+        player.y = plat.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      }
+    }
+  }
+
+  // Enemy movement
+  for (let e of level.enemies) {
+    if (!e.alive) continue;
+    e.x += e.dir * e.speed;
+    if (e.x < e.minX || e.x > e.maxX) e.dir *= -1;
+  }
+
+  // Collision with enemies
+  for (let e of level.enemies) {
+    if (!e.alive) continue;
+    if (player.x < e.x + e.w &&
+        player.x + player.w > e.x &&
+        player.y < e.y + e.h &&
+        player.y + player.h > e.y) {
+      if (player.vy > 0) {
+        // Stomp enemy
+        e.alive = false;
+        player.vy = player.jump / 2; // bounce up
+      } else {
+        gameOver = true;
+        showModal('Game Over!');
+      }
+    }
+  }
+
+  // Win condition
+  const goal = level.goal;
+  if (player.x < goal.x + goal.w &&
+      player.x + player.w > goal.x &&
+      player.y < goal.y + goal.h &&
+      player.y + player.h > goal.y) {
+    currentLevel++;
+    if (currentLevel < levels.length) {
+      showModal('Level Complete! Next Level');
+    } else {
+      showModal('You Win All Levels!');
+    }
+    gameOver = true;
+  }
+}
+
+function draw() {
+  const level = levels[currentLevel];
+  ctx.fillStyle = level.bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  // Player
+  ctx.fillStyle = 'blue';
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+
+  // Platforms
+  ctx.fillStyle = 'green';
+  for (let plat of level.platforms) {
+    ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+  }
+
+  // Enemies
+  for (let e of level.enemies) {
+    if (!e.alive) {
+      ctx.fillStyle = 'orange';
+      ctx.beginPath();
+      ctx.arc(e.x + e.w / 2, e.y + e.h / 2, 30, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = 'red';
+      ctx.fillRect(e.x, e.y, e.w, e.h);
+    }
+  }
+
+  // Goal (emoji flag)
+  ctx.font = '40px Arial';
+  ctx.fillText('🏁', level.goal.x, level.goal.y + 40);
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+resetGame();
+gameLoop();
+</script>
+</body>
+</html>

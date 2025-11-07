@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dangerous Art Playground - Multi-Level</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #111;
+    font-family: sans-serif;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #controls {
+    position: fixed;
+    top: 10px;
+    display: flex;
+    gap: 10px;
+    z-index: 10;
+  }
+  button {
+    padding: 10px 15px;
+    font-size: 16px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    background: #444;
+    color: white;
+  }
+  #progress-container {
+    position: fixed;
+    top: 50px;
+    width: 300px;
+    height: 20px;
+    background: #333;
+    border-radius: 10px;
+    overflow: hidden;
+    z-index: 10;
+  }
+  #progress-bar {
+    height: 100%;
+    width: 0%;
+    background: limegreen;
+    transition: width 0.3s;
+  }
+  #level-display {
+    position: fixed;
+    top: 80px;
+    font-size: 20px;
+    color: white;
+    z-index: 10;
+  }
+  #message {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 48px;
+    color: yellow;
+    display: none;
+    z-index: 20;
+    text-align: center;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<div id="controls">
+  <button onclick="restartGame()">Restart</button>
+</div>
+<div id="progress-container">
+  <div id="progress-bar"></div>
+</div>
+<div id="level-display">Level: 1</div>
+<div id="message"></div>
+<canvas id="artCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('artCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let shapes = [];
+let isDrawing = false;
+let uniqueShapeCount = 0;
+let gameOver = false;
+let currentLevel = 0;
+
+// Levels configuration
+const levels = [
+  { bombs: 5, target: 50 },
+  { bombs: 6, target: 60 },
+  { bombs: 7, target: 70 },
+  { bombs: 8, target: 80 },
+  { bombs: 9, target: 90 },
+  { bombs: 10, target: 100 },
+  { bombs: 11, target: 110 },
+  { bombs: 12, target: 120 },
+  { bombs: 13, target: 130 },
+  { bombs: 15, target: 140 }
+];
+
+const scaleFactor = window.innerWidth < 600 ? 0.6 : window.innerWidth < 900 ? 0.8 : 1;
+
+const explosionZones = [];
+
+// Audio setup
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const notes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88];
+
+function playNote() {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = notes[Math.floor(Math.random() * notes.length)];
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.3);
+}
+
+function playExplosionSound() {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(80, audioCtx.currentTime);
+  gain.gain.setValueAtTime(0.8, audioCtx.currentTime);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.8);
+  gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.8);
+  osc.stop(audioCtx.currentTime + 0.8);
+}
+
+function randomColor() {
+  return `hsl(${Math.random() * 360}, 100%, 50%)`;
+}
+
+function createShape(x, y) {
+  if (gameOver) return;
+  if (checkExplosion(x, y)) {
+    triggerExplosion(x, y);
+    return;
+  }
+  if (checkOverlap(x, y)) return;
+
+  //const size = Math.random() * 80 + 20;
+  const size = (Math.random() * 80 + 20) * scaleFactor;
+  const shapeType = Math.floor(Math.random() * 3);
+  const rotation = Math.random() * Math.PI * 2;
+  shapes.push({
+    x, y, size, shapeType, rotation,
+    color: randomColor(),
+    opacity: 0,
+    spinSpeed: (Math.random() - 0.5) * 0.05
+  });
+  playNote();
+  uniqueShapeCount++;
+  updateProgress();
+  if (uniqueShapeCount >= levels[currentLevel].target) {
+    levelComplete();
+  }
+}
+
+function drawShapes() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  shapes.forEach(shape => {
+    ctx.save();
+    ctx.translate(shape.x, shape.y);
+    ctx.rotate(shape.rotation);
+    ctx.globalAlpha = shape.opacity;
+    ctx.fillStyle = shape.color;
+    ctx.beginPath();
+    if (shape.shapeType === 0) {
+      ctx.arc(0, 0, shape.size / 2, 0, Math.PI * 2);
+    } else if (shape.shapeType === 1) {
+      ctx.rect(-shape.size / 2, -shape.size / 2, shape.size, shape.size);
+    } else {
+      ctx.moveTo(0, -shape.size / 2);
+      ctx.lineTo(shape.size / 2, shape.size / 2);
+      ctx.lineTo(-shape.size / 2, shape.size / 2);
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.restore();
+
+    if (shape.opacity < 1) shape.opacity += 0.02;
+    shape.rotation += shape.spinSpeed;
+  });
+
+  if (gameOver) {
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = "red";
+    explosionZones.forEach(zone => {
+      ctx.beginPath();
+      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  requestAnimationFrame(drawShapes);
+}
+
+function checkExplosion(x, y) {
+  return explosionZones.some(zone => {
+    const dx = x - zone.x;
+    const dy = y - zone.y;
+    return Math.sqrt(dx * dx + dy * dy) < zone.radius;
+  });
+}
+
+function checkOverlap(x, y) {
+  return shapes.some(shape => {
+    const dx = x - shape.x;
+    const dy = y - shape.y;
+    return Math.sqrt(dx * dx + dy * dy) < shape.size / 2 + 20;
+  });
+}
+
+function triggerExplosion(x, y) {
+  gameOver = true;
+  playExplosionSound();
+  explosionAnimation(x, y);
+  endGame("💥 BOOM! YOU LOSE!", false);
+}
+
+function explosionAnimation(x, y) {
+  for (let i = 0; i < 100; i++) {
+    shapes.push({
+      x: x + (Math.random() - 0.5) * 300,
+      y: y + (Math.random() - 0.5) * 300,
+      size: Math.random() * 50 + 10,
+      shapeType: Math.floor(Math.random() * 3),
+      rotation: Math.random() * Math.PI * 2,
+      color: `hsl(${Math.random() * 60}, 100%, 50%)`,
+      opacity: 1,
+      spinSpeed: (Math.random() - 0.5) * 0.2
+    });
+  }
+}
+
+function levelComplete() {
+  gameOver = true;
+  if (currentLevel < levels.length - 1) {
+    endGame(`✅ Level ${currentLevel + 1} Complete!`, true);
+  } else {
+    endGame("🏆 YOU BEAT ALL LEVELS!", false);
+  }
+}
+
+function endGame(message, nextLevelAvailable) {
+  const msgDiv = document.getElementById('message');
+  msgDiv.innerHTML = message + "<br>";
+  if (nextLevelAvailable) {
+    msgDiv.innerHTML += `<button onclick="nextLevel()">Next Level</button>`;
+  } else {
+    msgDiv.innerHTML += `<button onclick="restartGame()">Restart</button>`;
+  }
+  msgDiv.style.display = 'block';
+}
+
+function nextLevel() {
+  currentLevel++;
+  startLevel();
+}
+
+function restartGame() {
+  currentLevel = 0;
+  startLevel();
+}
+
+function startLevel() {
+  shapes = [];
+  uniqueShapeCount = 0;
+  gameOver = false;
+  document.getElementById('message').style.display = 'none';
+  updateProgress();
+  document.getElementById('level-display').textContent = `Level: ${currentLevel + 1}`;
+  generateExplosionZones();
+}
+
+function generateExplosionZones() {
+  explosionZones.length = 0;
+  for (let i = 0; i < levels[currentLevel].bombs; i++) {
+    explosionZones.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      //radius: Math.random() * 40 + 30
+      radius: (Math.random() * 40 + 30) * scaleFactor
+    });
+  }
+}
+
+function updateProgress() {
+  const progress = (uniqueShapeCount / levels[currentLevel].target) * 100;
+  document.getElementById('progress-bar').style.width = progress + "%";
+}
+
+
+// Mouse events
+canvas.addEventListener('mousedown', () => isDrawing = true);
+canvas.addEventListener('mouseup', () => isDrawing = false);
+canvas.addEventListener('mousemove', (e) => {
+  if (isDrawing) createShape(e.clientX, e.clientY);
+});
+canvas.addEventListener('click', (e) => {
+  createShape(e.clientX, e.clientY);
+});
+
+// Touch events
+canvas.addEventListener('touchstart', (e) => {
+  isDrawing = true;
+  const touch = e.touches[0];
+  createShape(touch.clientX, touch.clientY);
+});
+canvas.addEventListener('touchend', () => isDrawing = false);
+canvas.addEventListener('touchmove', (e) => {
+  if (isDrawing) {
+    const touch = e.touches[0];
+    createShape(touch.clientX, touch.clientY);
+  }
+});
+
+
+startLevel();
+drawShapes();
+</script>
+</body>
+</html>

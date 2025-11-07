@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crazy Art Playground with Music</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #111;
+    font-family: sans-serif;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #controls {
+    position: fixed;
+    top: 10px;
+    display: flex;
+    gap: 10px;
+    z-index: 10;
+  }
+  button {
+    padding: 10px 15px;
+    font-size: 16px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    background: #444;
+    color: white;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<div id="controls">
+  <button onclick="clearCanvas()">Clear Canvas</button>
+  <button onclick="surpriseMe()">Surprise Me!</button>
+</div>
+<canvas id="artCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('artCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let shapes = [];
+let isDrawing = false;
+
+// Audio setup
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const notes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88]; // C major scale
+
+function playNote() {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = notes[Math.floor(Math.random() * notes.length)];
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.3);
+}
+
+function randomColor() {
+  return `hsl(${Math.random() * 360}, 100%, 50%)`;
+}
+
+function createShape(x, y) {
+  const size = Math.random() * 80 + 20;
+  const shapeType = Math.floor(Math.random() * 3);
+  const rotation = Math.random() * Math.PI * 2;
+  shapes.push({
+    x, y, size, shapeType, rotation,
+    color: randomColor(),
+    opacity: 0,
+    spinSpeed: (Math.random() - 0.5) * 0.05
+  });
+  playNote(); // Play sound when shape is created
+}
+
+function drawShapes() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  shapes.forEach(shape => {
+    ctx.save();
+    ctx.translate(shape.x, shape.y);
+    ctx.rotate(shape.rotation);
+    ctx.globalAlpha = shape.opacity;
+    ctx.fillStyle = shape.color;
+    ctx.beginPath();
+    if (shape.shapeType === 0) {
+      ctx.arc(0, 0, shape.size / 2, 0, Math.PI * 2);
+    } else if (shape.shapeType === 1) {
+      ctx.rect(-shape.size / 2, -shape.size / 2, shape.size, shape.size);
+    } else {
+      ctx.moveTo(0, -shape.size / 2);
+      ctx.lineTo(shape.size / 2, shape.size / 2);
+      ctx.lineTo(-shape.size / 2, shape.size / 2);
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.restore();
+
+    // Animate
+    if (shape.opacity < 1) shape.opacity += 0.02;
+    shape.rotation += shape.spinSpeed;
+  });
+  requestAnimationFrame(drawShapes);
+}
+
+canvas.addEventListener('mousedown', () => isDrawing = true);
+canvas.addEventListener('mouseup', () => isDrawing = false);
+canvas.addEventListener('mousemove', (e) => {
+  if (isDrawing) createShape(e.clientX, e.clientY);
+});
+canvas.addEventListener('click', (e) => {
+  createShape(e.clientX, e.clientY);
+});
+
+function clearCanvas() {
+  shapes = [];
+}
+
+function surpriseMe() {
+  for (let i = 0; i < 50; i++) {
+    createShape(Math.random() * canvas.width, Math.random() * canvas.height);
+  }
+}
+
+drawShapes();
+</script>
+</body>
+</html>
